@@ -28,6 +28,7 @@ using namespace std;
 #define OPT_USE_DEVICE_TIMING "use_device_timing"
 #define OPT_WINDOW "window"
 #define OPT_PRIORITY "priority"
+#define OPT_FORCE_MS2109 "forcems2109"
 
 WASAPINotify *GetNotify();
 static void GetWASAPIDefaults(obs_data_t *settings);
@@ -183,6 +184,7 @@ class WASAPISource {
 	std::atomic<bool> useDeviceTiming = false;
 	std::atomic<bool> isDefaultDevice = false;
 	std::atomic<bool> sawBadTimestamp = false;
+	std::atomic<bool> forceMS2109 = false;
 	bool hooked = false;
 
 	bool previouslyFailed = false;
@@ -290,6 +292,7 @@ class WASAPISource {
 		string window_class;
 		string title;
 		string executable;
+		bool forceMS2109;
 	};
 
 	UpdateParams BuildUpdateParams(obs_data_t *settings);
@@ -542,6 +545,10 @@ WASAPISource::UpdateParams WASAPISource::BuildUpdateParams(obs_data_t *settings)
 	params.window_class.clear();
 	params.title.clear();
 	params.executable.clear();
+	if (sourceType == SourceType::Input) {
+		params.forceMS2109 =
+			obs_data_get_bool(settings, OPT_FORCE_MS2109);
+	}
 	if (sourceType != SourceType::Input) {
 		const char *const window =
 			obs_data_get_string(settings, OPT_WINDOW);
@@ -572,6 +579,7 @@ void WASAPISource::UpdateSettings(UpdateParams &&params)
 	device_id = std::move(params.device_id);
 	useDeviceTiming = params.useDeviceTiming;
 	isDefaultDevice = params.isDefaultDevice;
+	forceMS2109 = params.forceMS2109;
 	priority = params.priority;
 	window_class = std::move(params.window_class);
 	title = std::move(params.title);
@@ -1141,7 +1149,7 @@ bool WASAPISource::ProcessCaptureData()
 
 		obs_source_audio data = {};
 		data.data[0] = buffer;
-		if (isMS2109Device) {
+		if (isMS2109Device || forceMS2109) {
 			data.frames = frames >> 1;
 			data.speakers = SPEAKERS_STEREO;
 			data.samples_per_sec = sampleRate >> 1;
@@ -1505,6 +1513,7 @@ static void GetWASAPIDefaultsInput(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, OPT_DEVICE_ID, "default");
 	obs_data_set_default_bool(settings, OPT_USE_DEVICE_TIMING, false);
+	obs_data_set_default_bool(settings, OPT_FORCE_MS2109, false);
 }
 
 static void GetWASAPIDefaultsDeviceOutput(obs_data_t *settings)
@@ -1668,6 +1677,9 @@ static obs_properties_t *GetWASAPIPropertiesInput(void *)
 
 	obs_properties_add_bool(props, OPT_USE_DEVICE_TIMING,
 				obs_module_text("UseDeviceTiming"));
+
+	obs_properties_add_bool(props, OPT_FORCE_MS2109,
+		        obs_module_text("ForceMS2109"));
 
 	return props;
 }
