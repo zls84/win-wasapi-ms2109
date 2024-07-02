@@ -581,7 +581,7 @@ void WASAPISource::LogSettings()
 {
 	if (sourceType == SourceType::ProcessOutput) {
 		blog(LOG_INFO,
-		     "[win-wasapi: '%s'] update settings:\n"
+		     "[win-wasapi-ms2109: '%s'] update settings:\n"
 		     "\texecutable: %s\n"
 		     "\ttitle: %s\n"
 		     "\tclass: %s\n"
@@ -590,7 +590,7 @@ void WASAPISource::LogSettings()
 		     title.c_str(), window_class.c_str(), (int)priority);
 	} else {
 		blog(LOG_INFO,
-		     "[win-wasapi: '%s'] update settings:\n"
+		     "[win-wasapi-ms2109: '%s'] update settings:\n"
 		     "\tdevice id: %s\n"
 		     "\tuse device timing: %d",
 		     obs_source_get_name(source), device_id.c_str(),
@@ -1023,7 +1023,7 @@ bool WASAPISource::TryInitialize()
 
 DWORD WINAPI WASAPISource::ReconnectThread(LPVOID param)
 {
-	os_set_thread_name("win-wasapi: reconnect thread");
+	os_set_thread_name("win-wasapi-ms2109: reconnect thread");
 
 	WASAPISource *source = (WASAPISource *)param;
 
@@ -1170,7 +1170,7 @@ bool WASAPISource::ProcessCaptureData()
 
 DWORD WINAPI WASAPISource::CaptureThread(LPVOID param)
 {
-	os_set_thread_name("win-wasapi: capture thread");
+	os_set_thread_name("win-wasapi-ms2109: capture thread");
 
 	const HRESULT hr = CoInitializeEx(0, COINIT_MULTITHREADED);
 	const bool com_initialized = SUCCEEDED(hr);
