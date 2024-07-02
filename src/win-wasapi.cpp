@@ -1727,7 +1727,7 @@ static obs_properties_t *GetWASAPIPropertiesProcessOutput(void *data)
 void RegisterWASAPIInput()
 {
 	obs_source_info info = {};
-	info.id = "wasapi_input_capture";
+	info.id = "wasapims2109_input_capture";
 	info.type = OBS_SOURCE_TYPE_INPUT;
 	info.output_flags = OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE;
 	info.get_name = GetWASAPIInputName;
@@ -1745,7 +1745,7 @@ void RegisterWASAPIInput()
 void RegisterWASAPIDeviceOutput()
 {
 	obs_source_info info = {};
-	info.id = "wasapi_output_capture";
+	info.id = "wasapims2109_output_capture";
 	info.type = OBS_SOURCE_TYPE_INPUT;
 	info.output_flags = OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE |
 			    OBS_SOURCE_DO_NOT_SELF_MONITOR;
@@ -1764,7 +1764,7 @@ void RegisterWASAPIDeviceOutput()
 void RegisterWASAPIProcessOutput()
 {
 	obs_source_info info = {};
-	info.id = "wasapi_process_output_capture";
+	info.id = "wasapims2109_process_output_capture";
 	info.type = OBS_SOURCE_TYPE_INPUT;
 	info.output_flags = OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE |
 			    OBS_SOURCE_DO_NOT_SELF_MONITOR;
