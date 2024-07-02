@@ -251,6 +251,7 @@ class WASAPISource {
 	speaker_layout speakers;
 	audio_format format;
 	uint32_t sampleRate;
+	bool isMS2109Device;
 
 	vector<BYTE> silence;
 
@@ -929,6 +930,14 @@ void WASAPISource::Initialize()
 				    device_id);
 
 		device_name = GetDeviceName(device);
+
+		if (sourceType == SourceType::Input)
+		{
+			std::string MS2109DeviceName(
+				"Digital Audio Interface (USB Digital Audio)");
+			MS2109DeviceName.resize(MS2109DeviceName.length() + 1);
+			isMS2109Device = device_name == MS2109DeviceName;
+		}
 	}
 
 	ResetEvent(receiveSignal);
@@ -1132,9 +1141,15 @@ bool WASAPISource::ProcessCaptureData()
 
 		obs_source_audio data = {};
 		data.data[0] = buffer;
-		data.frames = frames;
-		data.speakers = speakers;
-		data.samples_per_sec = sampleRate;
+		if (isMS2109Device) {
+			data.frames = frames >> 1;
+			data.speakers = SPEAKERS_STEREO;
+			data.samples_per_sec = sampleRate >> 1;
+		} else {
+			data.frames = frames;
+			data.speakers = speakers;
+			data.samples_per_sec = sampleRate;
+		}
 		data.format = format;
 		if (sourceType == SourceType::ProcessOutput) {
 			data.timestamp = ts * 100;
