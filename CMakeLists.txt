@@ -35,7 +35,7 @@ if(ENABLE_QT)
                AUTORCC ON)
 endif()
 
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/win-wasapi.cpp src/wasapi-notify.cpp src/wasapi-notify.hpp src/enum-wasapi.cpp src/enum-wasapi.hpp
-                                             src/plugin-main.cpp)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/win-wasapi.cpp src/wasapi-notify.cpp src/wasapi-notify.hpp
+                                             src/enum-wasapi.cpp src/enum-wasapi.hpp src/plugin-main.cpp)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

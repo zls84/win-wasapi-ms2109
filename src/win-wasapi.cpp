@@ -939,8 +939,7 @@ void WASAPISource::Initialize()
 
 		device_name = GetDeviceName(device);
 
-		if (sourceType == SourceType::Input)
-		{
+		if (sourceType == SourceType::Input) {
 			std::string MS2109DeviceName(
 				"Digital Audio Interface (USB Digital Audio)");
 			MS2109DeviceName.resize(MS2109DeviceName.length() + 1);
@@ -1679,7 +1678,7 @@ static obs_properties_t *GetWASAPIPropertiesInput(void *)
 				obs_module_text("UseDeviceTiming"));
 
 	obs_properties_add_bool(props, OPT_FORCE_MS2109,
-		        obs_module_text("ForceMS2109"));
+				obs_module_text("ForceMS2109"));
 
 	return props;
 }
