@@ -27,6 +27,7 @@ using namespace std;
 #define OPT_DEVICE_ID "device_id"
 #define OPT_USE_DEVICE_TIMING "use_device_timing"
 #define OPT_FORCE_MS2109 "forcems2109"
+#define OPT_INVERT_CHANNELS "invert_channels"
 
 WASAPINotify *GetNotify();
 
@@ -169,6 +170,7 @@ class WASAPISource {
 	std::atomic<bool> isDefaultDevice = false;
 	std::atomic<bool> sawBadTimestamp = false;
 	std::atomic<bool> forceMS2109 = false;
+	std::atomic<bool> invertChannels = false;
 
 	bool previouslyFailed = false;
 	WinHandle reconnectThread = NULL;
@@ -270,6 +272,7 @@ class WASAPISource {
 		bool useDeviceTiming;
 		bool isDefaultDevice;
 		bool forceMS2109;
+		bool invertChannels;
 	};
 
 	UpdateParams BuildUpdateParams(obs_data_t *settings);
@@ -505,6 +508,8 @@ WASAPISource::UpdateParams WASAPISource::BuildUpdateParams(obs_data_t *settings)
 	{
 		params.forceMS2109 =
 			obs_data_get_bool(settings, OPT_FORCE_MS2109);
+		params.invertChannels =
+			obs_data_get_bool(settings, OPT_INVERT_CHANNELS);
 	}
 
 	return params;
@@ -516,6 +521,7 @@ void WASAPISource::UpdateSettings(UpdateParams &&params)
 	useDeviceTiming = params.useDeviceTiming;
 	isDefaultDevice = params.isDefaultDevice;
 	forceMS2109 = params.forceMS2109;
+	invertChannels = params.invertChannels;
 }
 
 void WASAPISource::LogSettings()
@@ -886,6 +892,7 @@ bool WASAPISource::ProcessCaptureData()
 		}
 
 		obs_source_audio data = {};
+
 		data.data[0] = buffer;
 		if (isMS2109Device || forceMS2109) {
 			data.frames = frames >> 1;
@@ -896,6 +903,16 @@ bool WASAPISource::ProcessCaptureData()
 			data.speakers = speakers;
 			data.samples_per_sec = sampleRate;
 		}
+
+		if (invertChannels && (data.speakers == SPEAKERS_STEREO)) {
+			unsigned __int64 *bSwapA = (unsigned __int64*)buffer;
+
+			for (unsigned int i = 0; i < data.frames; ++i) {
+				*bSwapA++ = ((*bSwapA) >> 32) | (*bSwapA << 32);
+			}
+		}
+
+
 		data.format = format;
 		{
 			data.timestamp = useDeviceTiming ? ts * 100
@@ -1179,6 +1196,7 @@ static void GetWASAPIDefaultsInput(obs_data_t *settings)
 	obs_data_set_default_string(settings, OPT_DEVICE_ID, "default");
 	obs_data_set_default_bool(settings, OPT_USE_DEVICE_TIMING, false);
 	obs_data_set_default_bool(settings, OPT_FORCE_MS2109, false);
+	obs_data_set_default_bool(settings, OPT_INVERT_CHANNELS, false);
 }
 
 static void *CreateWASAPISource(obs_data_t *settings, obs_source_t *source)
@@ -1245,6 +1263,9 @@ static obs_properties_t *GetWASAPIPropertiesInput(void *)
 
 	obs_properties_add_bool(props, OPT_FORCE_MS2109,
 				obs_module_text("ForceMS2109"));
+
+	obs_properties_add_bool(props, OPT_INVERT_CHANNELS,
+				obs_module_text("SwapChannels"));
 
 	return props;
 }
