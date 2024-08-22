@@ -31,7 +31,6 @@ using namespace std;
 #define OPT_FORCE_MS2109 "forcems2109"
 
 WASAPINotify *GetNotify();
-static void GetWASAPIDefaults(obs_data_t *settings);
 
 #define OBS_KSAUDIO_SPEAKER_4POINT1 \
 	(KSAUDIO_SPEAKER_SURROUND | SPEAKER_LOW_FREQUENCY)
@@ -105,12 +104,6 @@ WASAPIActivateAudioInterfaceCompletionHandler::ActivateCompleted(
 	return hr;
 }
 
-enum class SourceType {
-	Input,
-	DeviceOutput,
-	ProcessOutput,
-};
-
 class ARtwqAsyncCallback : public IRtwqAsyncCallback {
 protected:
 	ARtwqAsyncCallback(void *source) : source(source) {}
@@ -162,7 +155,6 @@ class WASAPISource {
 	ComPtr<IAudioCaptureClient> capture;
 
 	obs_source_t *source;
-	obs_weak_source_t *reroute_target = nullptr;
 	wstring default_id;
 	string device_id;
 	string device_name;
@@ -174,18 +166,11 @@ class WASAPISource {
 	PFN_RtwqPutWorkItem rtwq_put_work_item = NULL;
 	PFN_RtwqPutWaitingWorkItem rtwq_put_waiting_work_item = NULL;
 	bool rtwq_supported = false;
-	window_priority priority;
-	string window_class;
-	string title;
-	string executable;
-	HWND hwnd = NULL;
 	DWORD process_id = 0;
-	const SourceType sourceType;
 	std::atomic<bool> useDeviceTiming = false;
 	std::atomic<bool> isDefaultDevice = false;
 	std::atomic<bool> sawBadTimestamp = false;
 	std::atomic<bool> forceMS2109 = false;
-	bool hooked = false;
 
 	bool previouslyFailed = false;
 	WinHandle reconnectThread = NULL;
@@ -267,17 +252,15 @@ class WASAPISource {
 
 	static ComPtr<IMMDevice> InitDevice(IMMDeviceEnumerator *enumerator,
 					    bool isDefaultDevice,
-					    SourceType type,
 					    const string device_id);
 	static ComPtr<IAudioClient> InitClient(
-		IMMDevice *device, SourceType type, DWORD process_id,
+		IMMDevice *device, DWORD process_id,
 		PFN_ActivateAudioInterfaceAsync activate_audio_interface_async,
 		speaker_layout &speakers, audio_format &format,
 		uint32_t &sampleRate);
 	static void InitFormat(const WAVEFORMATEX *wfex,
 			       enum speaker_layout &speakers,
 			       enum audio_format &format, uint32_t &sampleRate);
-	static void ClearBuffer(IMMDevice *device);
 	static ComPtr<IAudioCaptureClient> InitCapture(IAudioClient *client,
 						       HANDLE receiveSignal);
 	void Initialize();
@@ -288,10 +271,6 @@ class WASAPISource {
 		string device_id;
 		bool useDeviceTiming;
 		bool isDefaultDevice;
-		window_priority priority;
-		string window_class;
-		string title;
-		string executable;
 		bool forceMS2109;
 	};
 
@@ -300,12 +279,10 @@ class WASAPISource {
 	void LogSettings();
 
 public:
-	WASAPISource(obs_data_t *settings, obs_source_t *source_,
-		     SourceType type);
+	WASAPISource(obs_data_t *settings, obs_source_t *source_);
 	~WASAPISource();
 
 	void Update(obs_data_t *settings);
-	void OnWindowChanged(obs_data_t *settings);
 
 	void Activate();
 	void Deactivate();
@@ -315,21 +292,10 @@ public:
 	void OnStartCapture();
 	void OnSampleReady();
 	void OnRestart();
-
-	bool GetHooked();
-	HWND GetHwnd();
-
-	void SetRerouteTarget(obs_source_t *target)
-	{
-		obs_weak_source_release(reroute_target);
-		reroute_target = obs_source_get_weak_source(target);
-	}
 };
 
-WASAPISource::WASAPISource(obs_data_t *settings, obs_source_t *source_,
-			   SourceType type)
+WASAPISource::WASAPISource(obs_data_t *settings, obs_source_t *source_)
 	: source(source_),
-	  sourceType(type),
 	  startCapture(this),
 	  sampleReady(this),
 	  restart(this)
@@ -518,8 +484,6 @@ void WASAPISource::Stop()
 		rtwq_unlock_work_queue(sampleReady.GetQueueId());
 	else
 		WaitForSingleObject(captureThread, INFINITE);
-
-	obs_weak_source_release(reroute_target);
 }
 
 WASAPISource::~WASAPISource()
@@ -540,35 +504,9 @@ WASAPISource::UpdateParams WASAPISource::BuildUpdateParams(obs_data_t *settings)
 		obs_data_get_bool(settings, OPT_USE_DEVICE_TIMING);
 	params.isDefaultDevice =
 		_strcmpi(params.device_id.c_str(), "default") == 0;
-	params.priority =
-		(window_priority)obs_data_get_int(settings, "priority");
-	params.window_class.clear();
-	params.title.clear();
-	params.executable.clear();
-	if (sourceType == SourceType::Input) {
+	{
 		params.forceMS2109 =
 			obs_data_get_bool(settings, OPT_FORCE_MS2109);
-	}
-	if (sourceType != SourceType::Input) {
-		const char *const window =
-			obs_data_get_string(settings, OPT_WINDOW);
-		char *window_class = nullptr;
-		char *title = nullptr;
-		char *executable = nullptr;
-		ms_build_window_strings(window, &window_class, &title,
-					&executable);
-		if (window_class) {
-			params.window_class = window_class;
-			bfree(window_class);
-		}
-		if (title) {
-			params.title = title;
-			bfree(title);
-		}
-		if (executable) {
-			params.executable = executable;
-			bfree(executable);
-		}
 	}
 
 	return params;
@@ -580,24 +518,11 @@ void WASAPISource::UpdateSettings(UpdateParams &&params)
 	useDeviceTiming = params.useDeviceTiming;
 	isDefaultDevice = params.isDefaultDevice;
 	forceMS2109 = params.forceMS2109;
-	priority = params.priority;
-	window_class = std::move(params.window_class);
-	title = std::move(params.title);
-	executable = std::move(params.executable);
 }
 
 void WASAPISource::LogSettings()
 {
-	if (sourceType == SourceType::ProcessOutput) {
-		blog(LOG_INFO,
-		     "[win-wasapi-ms2109: '%s'] update settings:\n"
-		     "\texecutable: %s\n"
-		     "\ttitle: %s\n"
-		     "\tclass: %s\n"
-		     "\tpriority: %d",
-		     obs_source_get_name(source), executable.c_str(),
-		     title.c_str(), window_class.c_str(), (int)priority);
-	} else {
+	{
 		blog(LOG_INFO,
 		     "[win-wasapi-ms2109: '%s'] update settings:\n"
 		     "\tdevice id: %s\n"
@@ -612,33 +537,10 @@ void WASAPISource::Update(obs_data_t *settings)
 	UpdateParams params = BuildUpdateParams(settings);
 
 	const bool restart =
-		(sourceType == SourceType::ProcessOutput)
-			? ((priority != params.priority) ||
-			   (window_class != params.window_class) ||
-			   (title != params.title) ||
-			   (executable != params.executable))
-			: (device_id.compare(params.device_id) != 0);
+			device_id.compare(params.device_id) != 0;
 
 	UpdateSettings(std::move(params));
 	LogSettings();
-
-	if (restart)
-		SetEvent(restartSignal);
-}
-
-void WASAPISource::OnWindowChanged(obs_data_t *settings)
-{
-	UpdateParams params = BuildUpdateParams(settings);
-
-	const bool restart =
-		(sourceType == SourceType::ProcessOutput)
-			? ((priority != params.priority) ||
-			   (window_class != params.window_class) ||
-			   (title != params.title) ||
-			   (executable != params.executable))
-			: (device_id.compare(params.device_id) != 0);
-
-	UpdateSettings(std::move(params));
 
 	if (restart)
 		SetEvent(restartSignal);
@@ -665,16 +567,14 @@ void WASAPISource::Deactivate()
 
 ComPtr<IMMDevice> WASAPISource::InitDevice(IMMDeviceEnumerator *enumerator,
 					   bool isDefaultDevice,
-					   SourceType type,
 					   const string device_id)
 {
 	ComPtr<IMMDevice> device;
 
 	if (isDefaultDevice) {
-		const bool input = type == SourceType::Input;
 		HRESULT res = enumerator->GetDefaultAudioEndpoint(
-			input ? eCapture : eRender,
-			input ? eCommunications : eConsole, device.Assign());
+			eCapture,
+			eCommunications, device.Assign());
 		if (FAILED(res))
 			throw HRError("Failed GetDefaultAudioEndpoint", res);
 	} else {
@@ -718,79 +618,17 @@ static DWORD GetSpeakerChannelMask(speaker_layout layout)
 }
 
 ComPtr<IAudioClient> WASAPISource::InitClient(
-	IMMDevice *device, SourceType type, DWORD process_id,
+	IMMDevice *device, DWORD process_id,
 	PFN_ActivateAudioInterfaceAsync activate_audio_interface_async,
 	speaker_layout &speakers, audio_format &format,
 	uint32_t &samples_per_sec)
 {
-	WAVEFORMATEXTENSIBLE wfextensible;
 	CoTaskMemPtr<WAVEFORMATEX> wfex;
 	const WAVEFORMATEX *pFormat;
 	HRESULT res;
 	ComPtr<IAudioClient> client;
 
-	if (type == SourceType::ProcessOutput) {
-		if (activate_audio_interface_async == NULL)
-			throw "ActivateAudioInterfaceAsync is not available";
-
-		struct obs_audio_info oai;
-		obs_get_audio_info(&oai);
-
-		const WORD nChannels = (WORD)get_audio_channels(oai.speakers);
-		const DWORD nSamplesPerSec = oai.samples_per_sec;
-		constexpr WORD wBitsPerSample = 32;
-		const WORD nBlockAlign = nChannels * wBitsPerSample / 8;
-
-		WAVEFORMATEX &wf = wfextensible.Format;
-		wf.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-		wf.nChannels = nChannels;
-		wf.nSamplesPerSec = nSamplesPerSec;
-		wf.nAvgBytesPerSec = nSamplesPerSec * nBlockAlign;
-		wf.nBlockAlign = nBlockAlign;
-		wf.wBitsPerSample = wBitsPerSample;
-		wf.cbSize = sizeof(wfextensible) - sizeof(wf);
-		wfextensible.Samples.wValidBitsPerSample = wBitsPerSample;
-		wfextensible.dwChannelMask =
-			GetSpeakerChannelMask(oai.speakers);
-		wfextensible.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
-
-		AUDIOCLIENT_ACTIVATION_PARAMS audioclientActivationParams;
-		audioclientActivationParams.ActivationType =
-			AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
-		audioclientActivationParams.ProcessLoopbackParams
-			.TargetProcessId = process_id;
-		audioclientActivationParams.ProcessLoopbackParams
-			.ProcessLoopbackMode =
-			PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
-		PROPVARIANT activateParams{};
-		activateParams.vt = VT_BLOB;
-		activateParams.blob.cbSize =
-			sizeof(audioclientActivationParams);
-		activateParams.blob.pBlobData =
-			reinterpret_cast<BYTE *>(&audioclientActivationParams);
-
-		{
-			Microsoft::WRL::ComPtr<
-				WASAPIActivateAudioInterfaceCompletionHandler>
-				handler = Microsoft::WRL::Make<
-					WASAPIActivateAudioInterfaceCompletionHandler>();
-			ComPtr<IActivateAudioInterfaceAsyncOperation> asyncOp;
-			res = activate_audio_interface_async(
-				VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
-				__uuidof(IAudioClient), &activateParams,
-				handler.Get(), &asyncOp);
-			if (FAILED(res))
-				throw HRError(
-					"Failed to get activate audio client",
-					res);
-
-			res = handler->GetActivateResult(client.Assign());
-			if (FAILED(res))
-				throw HRError("Async activation failed", res);
-		}
-
-		pFormat = &wf;
-	} else {
+	{
 		res = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL,
 				       nullptr, (void **)client.Assign());
 		if (FAILED(res))
@@ -806,58 +644,12 @@ ComPtr<IAudioClient> WASAPISource::InitClient(
 	InitFormat(pFormat, speakers, format, samples_per_sec);
 
 	DWORD flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
-	if (type != SourceType::Input)
-		flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
 	res = client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags,
 				 BUFFER_TIME_100NS, 0, pFormat, nullptr);
 	if (FAILED(res))
 		throw HRError("Failed to initialize audio client", res);
 
 	return client;
-}
-
-void WASAPISource::ClearBuffer(IMMDevice *device)
-{
-	CoTaskMemPtr<WAVEFORMATEX> wfex;
-	HRESULT res;
-	LPBYTE buffer;
-	UINT32 frames;
-	ComPtr<IAudioClient> client;
-
-	res = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-			       (void **)client.Assign());
-	if (FAILED(res))
-		throw HRError("Failed to activate client context", res);
-
-	res = client->GetMixFormat(&wfex);
-	if (FAILED(res))
-		throw HRError("Failed to get mix format", res);
-
-	res = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, BUFFER_TIME_100NS,
-				 0, wfex, nullptr);
-	if (FAILED(res))
-		throw HRError("Failed to initialize audio client", res);
-
-	/* Silent loopback fix. Prevents audio stream from stopping and */
-	/* messing up timestamps and other weird glitches during silence */
-	/* by playing a silent sample all over again. */
-
-	res = client->GetBufferSize(&frames);
-	if (FAILED(res))
-		throw HRError("Failed to get buffer size", res);
-
-	ComPtr<IAudioRenderClient> render;
-	res = client->GetService(IID_PPV_ARGS(render.Assign()));
-	if (FAILED(res))
-		throw HRError("Failed to get render client", res);
-
-	res = render->GetBuffer(frames, &buffer);
-	if (FAILED(res))
-		throw HRError("Failed to get buffer", res);
-
-	memset(buffer, 0, (size_t)frames * (size_t)wfex->nBlockAlign);
-
-	render->ReleaseBuffer(frames, 0);
 }
 
 static speaker_layout ConvertSpeakerLayout(DWORD layout, WORD channels)
@@ -917,29 +709,12 @@ ComPtr<IAudioCaptureClient> WASAPISource::InitCapture(IAudioClient *client,
 void WASAPISource::Initialize()
 {
 	ComPtr<IMMDevice> device;
-	if (sourceType == SourceType::ProcessOutput) {
-		device_name = "[VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK]";
-
-		hwnd = ms_find_window(INCLUDE_MINIMIZED, priority,
-				      window_class.c_str(), title.c_str(),
-				      executable.c_str());
-		if (!hwnd)
-			throw "Failed to find window";
-
-		DWORD dwProcessId = 0;
-		if (!GetWindowThreadProcessId(hwnd, &dwProcessId)) {
-			hwnd = NULL;
-			throw "Failed to get process id of window";
-		}
-
-		process_id = dwProcessId;
-	} else {
-		device = InitDevice(enumerator, isDefaultDevice, sourceType,
-				    device_id);
+	{
+		device = InitDevice(enumerator, isDefaultDevice, device_id);
 
 		device_name = GetDeviceName(device);
 
-		if (sourceType == SourceType::Input) {
+		{
 			std::string MS2109DeviceName(
 				"Digital Audio Interface (USB Digital Audio)");
 			MS2109DeviceName.resize(MS2109DeviceName.length() + 1);
@@ -950,10 +725,8 @@ void WASAPISource::Initialize()
 	ResetEvent(receiveSignal);
 
 	ComPtr<IAudioClient> temp_client = InitClient(
-		device, sourceType, process_id, activate_audio_interface_async,
+		device, process_id, activate_audio_interface_async,
 		speakers, format, sampleRate);
-	if (sourceType == SourceType::DeviceOutput)
-		ClearBuffer(device);
 	ComPtr<IAudioCaptureClient> temp_capture =
 		InitCapture(temp_client, receiveSignal);
 
@@ -981,31 +754,6 @@ void WASAPISource::Initialize()
 	blog(LOG_INFO,
 	     "WASAPI: Device '%s' [%" PRIu32 " Hz] initialized (source: %s)",
 	     device_name.c_str(), sampleRate, obs_source_get_name(source));
-
-	if (sourceType == SourceType::ProcessOutput && !hooked) {
-		hooked = true;
-
-		signal_handler_t *sh = obs_source_get_signal_handler(source);
-		calldata_t data = {0};
-		struct dstr title = {0};
-		struct dstr window_class = {0};
-		struct dstr executable = {0};
-
-		ms_get_window_title(&title, hwnd);
-		ms_get_window_class(&window_class, hwnd);
-		ms_get_window_exe(&executable, hwnd);
-
-		calldata_set_ptr(&data, "source", source);
-		calldata_set_string(&data, "title", title.array);
-		calldata_set_string(&data, "class", window_class.array);
-		calldata_set_string(&data, "executable", executable.array);
-		signal_handler_signal(sh, "hooked", &data);
-
-		dstr_free(&title);
-		dstr_free(&window_class);
-		dstr_free(&executable);
-		calldata_free(&data);
-	}
 }
 
 bool WASAPISource::TryInitialize()
@@ -1086,13 +834,6 @@ bool WASAPISource::ProcessCaptureData()
 	UINT captureSize = 0;
 
 	while (true) {
-		if ((sourceType == SourceType::ProcessOutput) &&
-		    !IsWindow(hwnd)) {
-			blog(LOG_WARNING,
-			     "[WASAPISource::ProcessCaptureData] window disappeared");
-			return false;
-		}
-
 		res = capture->GetNextPacketSize(&captureSize);
 		if (FAILED(res)) {
 			if (res != AUDCLNT_E_DEVICE_INVALIDATED)
@@ -1158,9 +899,7 @@ bool WASAPISource::ProcessCaptureData()
 			data.samples_per_sec = sampleRate;
 		}
 		data.format = format;
-		if (sourceType == SourceType::ProcessOutput) {
-			data.timestamp = ts * 100;
-		} else {
+		{
 			data.timestamp = useDeviceTiming ? ts * 100
 							 : os_gettime_ns();
 
@@ -1170,15 +909,7 @@ bool WASAPISource::ProcessCaptureData()
 					sampleRate);
 		}
 
-		if (reroute_target) {
-			obs_source_t *target =
-				obs_weak_source_get_source(reroute_target);
-
-			if (target) {
-				obs_source_output_audio(target, &data);
-				obs_source_release(target);
-			}
-		} else {
+		{
 			obs_source_output_audio(source, &data);
 		}
 
@@ -1231,11 +962,7 @@ DWORD WINAPI WASAPISource::CaptureThread(LPVOID param)
 		bool reconnect = false;
 		do {
 			/* Windows 7 does not seem to wake up for LOOPBACK */
-			const DWORD dwMilliseconds =
-				((sigs == active_sigs) &&
-				 (source->sourceType != SourceType::Input))
-					? 10
-					: INFINITE;
+			const DWORD dwMilliseconds = INFINITE;
 
 			const DWORD ret = WaitForMultipleObjects(
 				sig_count, sigs, false, dwMilliseconds);
@@ -1284,23 +1011,6 @@ DWORD WINAPI WASAPISource::CaptureThread(LPVOID param)
 						     source->device_name.c_str(),
 						     obs_source_get_name(
 							     source->source));
-						if (source->sourceType ==
-							    SourceType::
-								    ProcessOutput &&
-						    source->hooked) {
-							source->hooked = false;
-							signal_handler_t *sh =
-								obs_source_get_signal_handler(
-									source->source);
-							calldata_t data = {0};
-							calldata_set_ptr(
-								&data, "source",
-								source->source);
-							signal_handler_signal(
-								sh, "unhooked",
-								&data);
-							calldata_free(&data);
-						}
 						stop = true;
 						reconnect = true;
 						source->reconnectDuration =
@@ -1336,18 +1046,6 @@ DWORD WINAPI WASAPISource::CaptureThread(LPVOID param)
 			     "Device '%s' invalidated.  Retrying (source: %s)",
 			     source->device_name.c_str(),
 			     obs_source_get_name(source->source));
-			if (source->sourceType == SourceType::ProcessOutput &&
-			    source->hooked) {
-				source->hooked = false;
-				signal_handler_t *sh =
-					obs_source_get_signal_handler(
-						source->source);
-				calldata_t data = {0};
-				calldata_set_ptr(&data, "source",
-						 source->source);
-				signal_handler_signal(sh, "unhooked", &data);
-				calldata_free(&data);
-			}
 			SetEvent(source->reconnectSignal);
 		}
 	}
@@ -1366,9 +1064,8 @@ void WASAPISource::SetDefaultDevice(EDataFlow flow, ERole role, LPCWSTR id)
 	if (!isDefaultDevice)
 		return;
 
-	const bool input = sourceType == SourceType::Input;
-	const EDataFlow expectedFlow = input ? eCapture : eRender;
-	const ERole expectedRole = input ? eCommunications : eConsole;
+	const EDataFlow expectedFlow = eCapture;
+	const ERole expectedRole = eCommunications;
 	if (flow != expectedFlow || role != expectedRole)
 		return;
 
@@ -1383,7 +1080,7 @@ void WASAPISource::SetDefaultDevice(EDataFlow flow, ERole role, LPCWSTR id)
 	}
 
 	blog(LOG_INFO, "WASAPI: Default %s device changed",
-	     input ? "input" : "output");
+	     "input");
 
 	SetEvent(restartSignal);
 }
@@ -1461,15 +1158,6 @@ void WASAPISource::OnSampleReady()
 			     "Device '%s' invalidated.  Retrying (source: %s)",
 			     device_name.c_str(), obs_source_get_name(source));
 			SetEvent(reconnectSignal);
-			if (sourceType == SourceType::ProcessOutput && hooked) {
-				hooked = false;
-				signal_handler_t *sh =
-					obs_source_get_signal_handler(source);
-				calldata_t data = {0};
-				calldata_set_ptr(&data, "source", source);
-				signal_handler_signal(sh, "unhooked", &data);
-				calldata_free(&data);
-			}
 		} else {
 			SetEvent(idleSignal);
 		}
@@ -1481,31 +1169,11 @@ void WASAPISource::OnRestart()
 	SetEvent(receiveSignal);
 }
 
-bool WASAPISource::GetHooked()
-{
-	return hooked;
-}
-
-HWND WASAPISource::GetHwnd()
-{
-	return hwnd;
-}
-
 /* ------------------------------------------------------------------------- */
 
 static const char *GetWASAPIInputName(void *)
 {
 	return obs_module_text("AudioInput");
-}
-
-static const char *GetWASAPIDeviceOutputName(void *)
-{
-	return obs_module_text("AudioOutput");
-}
-
-static const char *GetWASAPIProcessOutputName(void *)
-{
-	return obs_module_text("ApplicationAudioCapture");
 }
 
 static void GetWASAPIDefaultsInput(obs_data_t *settings)
@@ -1515,87 +1183,11 @@ static void GetWASAPIDefaultsInput(obs_data_t *settings)
 	obs_data_set_default_bool(settings, OPT_FORCE_MS2109, false);
 }
 
-static void GetWASAPIDefaultsDeviceOutput(obs_data_t *settings)
-{
-	obs_data_set_default_string(settings, OPT_DEVICE_ID, "default");
-	obs_data_set_default_bool(settings, OPT_USE_DEVICE_TIMING, true);
-}
-
-static void GetWASAPIDefaultsProcessOutput(obs_data_t *) {}
-
-static void wasapi_get_hooked(void *data, calldata_t *cd)
-{
-	WASAPISource *wasapi_source = reinterpret_cast<WASAPISource *>(data);
-
-	if (!wasapi_source)
-		return;
-
-	bool hooked = wasapi_source->GetHooked();
-	HWND hwnd = wasapi_source->GetHwnd();
-
-	if (hooked && hwnd) {
-		calldata_set_bool(cd, "hooked", true);
-		struct dstr title = {0};
-		struct dstr window_class = {0};
-		struct dstr executable = {0};
-		ms_get_window_title(&title, hwnd);
-		ms_get_window_class(&window_class, hwnd);
-		ms_get_window_exe(&executable, hwnd);
-		calldata_set_string(cd, "title", title.array);
-		calldata_set_string(cd, "class", window_class.array);
-		calldata_set_string(cd, "executable", executable.array);
-		dstr_free(&title);
-		dstr_free(&window_class);
-		dstr_free(&executable);
-	} else {
-		calldata_set_bool(cd, "hooked", false);
-		calldata_set_string(cd, "title", "");
-		calldata_set_string(cd, "class", "");
-		calldata_set_string(cd, "executable", "");
-	}
-}
-
-static void wasapi_reroute_audio(void *data, calldata_t *cd)
-{
-	auto wasapi_source = static_cast<WASAPISource *>(data);
-	if (!wasapi_source)
-		return;
-
-	obs_source_t *target = nullptr;
-	calldata_get_ptr(cd, "target", &target);
-	wasapi_source->SetRerouteTarget(target);
-}
-
-static void *CreateWASAPISource(obs_data_t *settings, obs_source_t *source,
-				SourceType type)
+static void *CreateWASAPISource(obs_data_t *settings, obs_source_t *source)
 {
 	try {
-		if (type != SourceType::ProcessOutput) {
-			return new WASAPISource(settings, source, type);
-		} else {
-			WASAPISource *wasapi_source =
-				new WASAPISource(settings, source, type);
-
-			if (wasapi_source) {
-				signal_handler_t *sh =
-					obs_source_get_signal_handler(source);
-				signal_handler_add(sh,
-						   "void unhooked(ptr source)");
-				signal_handler_add(
-					sh,
-					"void hooked(ptr source, string title, string class, string executable)");
-
-				proc_handler_t *ph =
-					obs_source_get_proc_handler(source);
-				proc_handler_add(
-					ph,
-					"void get_hooked(out bool hooked, out string title, out string class, out string executable)",
-					wasapi_get_hooked, wasapi_source);
-				proc_handler_add(
-					ph, "void reroute_audio(in ptr target)",
-					wasapi_reroute_audio, wasapi_source);
-			}
-			return wasapi_source;
+		{
+			return new WASAPISource(settings, source);
 		}
 	} catch (const char *error) {
 		blog(LOG_ERROR, "[CreateWASAPISource] %s", error);
@@ -1606,19 +1198,7 @@ static void *CreateWASAPISource(obs_data_t *settings, obs_source_t *source,
 
 static void *CreateWASAPIInput(obs_data_t *settings, obs_source_t *source)
 {
-	return CreateWASAPISource(settings, source, SourceType::Input);
-}
-
-static void *CreateWASAPIDeviceOutput(obs_data_t *settings,
-				      obs_source_t *source)
-{
-	return CreateWASAPISource(settings, source, SourceType::DeviceOutput);
-}
-
-static void *CreateWASAPIProcessOutput(obs_data_t *settings,
-				       obs_source_t *source)
-{
-	return CreateWASAPISource(settings, source, SourceType::ProcessOutput);
+	return CreateWASAPISource(settings, source);
 }
 
 static void DestroyWASAPISource(void *obj)
@@ -1641,18 +1221,6 @@ static void DeactivateWASAPISource(void *obj)
 	static_cast<WASAPISource *>(obj)->Deactivate();
 }
 
-static bool UpdateWASAPIMethod(obs_properties_t *props, obs_property_t *,
-			       obs_data_t *settings)
-{
-	WASAPISource *source = (WASAPISource *)obs_properties_get_param(props);
-	if (!source)
-		return false;
-
-	source->Update(settings);
-
-	return true;
-}
-
 static obs_properties_t *GetWASAPIPropertiesInput(void *)
 {
 	obs_properties_t *props = obs_properties_create();
@@ -1662,7 +1230,7 @@ static obs_properties_t *GetWASAPIPropertiesInput(void *)
 		props, OPT_DEVICE_ID, obs_module_text("Device"),
 		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 
-	GetWASAPIAudioDevices(devices, true);
+	GetWASAPIAudioDevices(devices);
 
 	if (devices.size())
 		obs_property_list_add_string(
@@ -1683,73 +1251,6 @@ static obs_properties_t *GetWASAPIPropertiesInput(void *)
 	return props;
 }
 
-static obs_properties_t *GetWASAPIPropertiesDeviceOutput(void *)
-{
-	obs_properties_t *props = obs_properties_create();
-	vector<AudioDeviceInfo> devices;
-
-	obs_property_t *device_prop = obs_properties_add_list(
-		props, OPT_DEVICE_ID, obs_module_text("Device"),
-		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-
-	GetWASAPIAudioDevices(devices, false);
-
-	if (devices.size())
-		obs_property_list_add_string(
-			device_prop, obs_module_text("Default"), "default");
-
-	for (size_t i = 0; i < devices.size(); i++) {
-		AudioDeviceInfo &device = devices[i];
-		obs_property_list_add_string(device_prop, device.name.c_str(),
-					     device.id.c_str());
-	}
-
-	obs_properties_add_bool(props, OPT_USE_DEVICE_TIMING,
-				obs_module_text("UseDeviceTiming"));
-
-	return props;
-}
-
-static bool wasapi_window_changed(obs_properties_t *props, obs_property_t *p,
-				  obs_data_t *settings)
-{
-	WASAPISource *source = (WASAPISource *)obs_properties_get_param(props);
-	if (!source)
-		return false;
-
-	source->OnWindowChanged(settings);
-
-	ms_check_window_property_setting(props, p, settings, "window", 0);
-	return true;
-}
-
-static obs_properties_t *GetWASAPIPropertiesProcessOutput(void *data)
-{
-	obs_properties_t *props = obs_properties_create();
-	obs_properties_set_param(props, data, NULL);
-
-	obs_property_t *const window_prop = obs_properties_add_list(
-		props, OPT_WINDOW, obs_module_text("Window"),
-		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-	ms_fill_window_list(window_prop, INCLUDE_MINIMIZED, nullptr);
-	obs_property_set_modified_callback(window_prop, wasapi_window_changed);
-
-	obs_property_t *const priority_prop = obs_properties_add_list(
-		props, OPT_PRIORITY, obs_module_text("Priority"),
-		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(priority_prop,
-				  obs_module_text("Priority.Title"),
-				  WINDOW_PRIORITY_TITLE);
-	obs_property_list_add_int(priority_prop,
-				  obs_module_text("Priority.Class"),
-				  WINDOW_PRIORITY_CLASS);
-	obs_property_list_add_int(priority_prop,
-				  obs_module_text("Priority.Exe"),
-				  WINDOW_PRIORITY_EXE);
-
-	return props;
-}
-
 void RegisterWASAPIInput()
 {
 	obs_source_info info = {};
@@ -1765,43 +1266,5 @@ void RegisterWASAPIInput()
 	info.get_defaults = GetWASAPIDefaultsInput;
 	info.get_properties = GetWASAPIPropertiesInput;
 	info.icon_type = OBS_ICON_TYPE_AUDIO_INPUT;
-	obs_register_source(&info);
-}
-
-void RegisterWASAPIDeviceOutput()
-{
-	obs_source_info info = {};
-	info.id = "wasapims2109_output_capture";
-	info.type = OBS_SOURCE_TYPE_INPUT;
-	info.output_flags = OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE |
-			    OBS_SOURCE_DO_NOT_SELF_MONITOR;
-	info.get_name = GetWASAPIDeviceOutputName;
-	info.create = CreateWASAPIDeviceOutput;
-	info.destroy = DestroyWASAPISource;
-	info.update = UpdateWASAPISource;
-	info.activate = ActivateWASAPISource;
-	info.deactivate = DeactivateWASAPISource;
-	info.get_defaults = GetWASAPIDefaultsDeviceOutput;
-	info.get_properties = GetWASAPIPropertiesDeviceOutput;
-	info.icon_type = OBS_ICON_TYPE_AUDIO_OUTPUT;
-	obs_register_source(&info);
-}
-
-void RegisterWASAPIProcessOutput()
-{
-	obs_source_info info = {};
-	info.id = "wasapims2109_process_output_capture";
-	info.type = OBS_SOURCE_TYPE_INPUT;
-	info.output_flags = OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE |
-			    OBS_SOURCE_DO_NOT_SELF_MONITOR;
-	info.get_name = GetWASAPIProcessOutputName;
-	info.create = CreateWASAPIProcessOutput;
-	info.destroy = DestroyWASAPISource;
-	info.update = UpdateWASAPISource;
-	info.activate = ActivateWASAPISource;
-	info.deactivate = DeactivateWASAPISource;
-	info.get_defaults = GetWASAPIDefaultsProcessOutput;
-	info.get_properties = GetWASAPIPropertiesProcessOutput;
-	info.icon_type = OBS_ICON_TYPE_PROCESS_AUDIO_OUTPUT;
 	obs_register_source(&info);
 }

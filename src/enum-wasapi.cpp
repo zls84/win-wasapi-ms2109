@@ -37,7 +37,7 @@ string GetDeviceName(IMMDevice *device)
 	return device_name;
 }
 
-static void GetWASAPIAudioDevices_(vector<AudioDeviceInfo> &devices, bool input)
+static void GetWASAPIAudioDevices_(vector<AudioDeviceInfo> &devices)
 {
 	ComPtr<IMMDeviceEnumerator> enumerator;
 	ComPtr<IMMDeviceCollection> collection;
@@ -50,7 +50,7 @@ static void GetWASAPIAudioDevices_(vector<AudioDeviceInfo> &devices, bool input)
 	if (FAILED(res))
 		throw HRError("Failed to create enumerator", res);
 
-	res = enumerator->EnumAudioEndpoints(input ? eCapture : eRender,
+	res = enumerator->EnumAudioEndpoints(eCapture,
 					     DEVICE_STATE_ACTIVE,
 					     collection.Assign());
 	if (FAILED(res))
@@ -85,12 +85,12 @@ static void GetWASAPIAudioDevices_(vector<AudioDeviceInfo> &devices, bool input)
 	}
 }
 
-void GetWASAPIAudioDevices(vector<AudioDeviceInfo> &devices, bool input)
+void GetWASAPIAudioDevices(vector<AudioDeviceInfo> &devices)
 {
 	devices.clear();
 
 	try {
-		GetWASAPIAudioDevices_(devices, input);
+		GetWASAPIAudioDevices_(devices);
 
 	} catch (HRError &error) {
 		blog(LOG_WARNING, "[GetWASAPIAudioDevices] %s: %lX", error.str,

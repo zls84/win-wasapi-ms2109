@@ -38,4 +38,4 @@ struct AudioDeviceInfo {
 };
 
 std::string GetDeviceName(IMMDevice *device);
-void GetWASAPIAudioDevices(std::vector<AudioDeviceInfo> &devices, bool input);
+void GetWASAPIAudioDevices(std::vector<AudioDeviceInfo> &devices);
