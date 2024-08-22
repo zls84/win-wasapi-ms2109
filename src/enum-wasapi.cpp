@@ -50,8 +50,7 @@ static void GetWASAPIAudioDevices_(vector<AudioDeviceInfo> &devices)
 	if (FAILED(res))
 		throw HRError("Failed to create enumerator", res);
 
-	res = enumerator->EnumAudioEndpoints(eCapture,
-					     DEVICE_STATE_ACTIVE,
+	res = enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE,
 					     collection.Assign());
 	if (FAILED(res))
 		throw HRError("Failed to enumerate devices", res);

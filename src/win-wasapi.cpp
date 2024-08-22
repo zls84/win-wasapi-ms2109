@@ -540,8 +540,7 @@ void WASAPISource::Update(obs_data_t *settings)
 {
 	UpdateParams params = BuildUpdateParams(settings);
 
-	const bool restart =
-			device_id.compare(params.device_id) != 0;
+	const bool restart = device_id.compare(params.device_id) != 0;
 
 	UpdateSettings(std::move(params));
 	LogSettings();
@@ -577,8 +576,7 @@ ComPtr<IMMDevice> WASAPISource::InitDevice(IMMDeviceEnumerator *enumerator,
 
 	if (isDefaultDevice) {
 		HRESULT res = enumerator->GetDefaultAudioEndpoint(
-			eCapture,
-			eCommunications, device.Assign());
+			eCapture, eCommunications, device.Assign());
 		if (FAILED(res))
 			throw HRError("Failed GetDefaultAudioEndpoint", res);
 	} else {
@@ -728,9 +726,9 @@ void WASAPISource::Initialize()
 
 	ResetEvent(receiveSignal);
 
-	ComPtr<IAudioClient> temp_client = InitClient(
-		device, process_id, activate_audio_interface_async,
-		speakers, format, sampleRate);
+	ComPtr<IAudioClient> temp_client =
+		InitClient(device, process_id, activate_audio_interface_async,
+			   speakers, format, sampleRate);
 	ComPtr<IAudioCaptureClient> temp_capture =
 		InitCapture(temp_client, receiveSignal);
 
@@ -905,13 +903,12 @@ bool WASAPISource::ProcessCaptureData()
 		}
 
 		if (invertChannels && (data.speakers == SPEAKERS_STEREO)) {
-			unsigned __int64 *bSwapA = (unsigned __int64*)buffer;
+			unsigned __int64 *bSwapA = (unsigned __int64 *)buffer;
 
 			for (unsigned int i = 0; i < data.frames; ++i) {
 				*bSwapA++ = ((*bSwapA) >> 32) | (*bSwapA << 32);
 			}
 		}
-
 
 		data.format = format;
 		{
@@ -1094,8 +1091,7 @@ void WASAPISource::SetDefaultDevice(EDataFlow flow, ERole role, LPCWSTR id)
 		default_id.clear();
 	}
 
-	blog(LOG_INFO, "WASAPI: Default %s device changed",
-	     "input");
+	blog(LOG_INFO, "WASAPI: Default %s device changed", "input");
 
 	SetEvent(restartSignal);
 }
