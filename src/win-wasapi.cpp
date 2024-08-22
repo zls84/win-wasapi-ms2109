@@ -26,8 +26,6 @@ using namespace std;
 
 #define OPT_DEVICE_ID "device_id"
 #define OPT_USE_DEVICE_TIMING "use_device_timing"
-#define OPT_WINDOW "window"
-#define OPT_PRIORITY "priority"
 #define OPT_FORCE_MS2109 "forcems2109"
 
 WASAPINotify *GetNotify();
